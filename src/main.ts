@@ -1,114 +1,112 @@
-import {
-	Editor,
-	MarkdownView,
-	MarkdownFileInfo,
-	Modal,
-	Notice,
-	Plugin,
-} from 'obsidian';
-import {
-	DEFAULT_SETTINGS,
-	MyPluginSettings,
-	SampleSettingTab,
-} from './settings';
+import { App, Notice, Plugin, moment, normalizePath } from 'obsidian';
 
-// Remember to rename these classes and interfaces!
-
-export default class MyPlugin extends Plugin {
-	settings!: MyPluginSettings;
-
-	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			},
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
-	}
-
-	onunload() {}
-
-	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
-		);
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+// Settings of the core Daily Notes plugin (all optional; empty = default).
+interface DailyNotesOptions {
+	format?: string;
+	folder?: string;
+	template?: string;
 }
 
-class SampleModal extends Modal {
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText('Woah!');
+const DEFAULT_FORMAT = 'YYYY-MM-DD';
+
+export default class TomorrowNotePlugin extends Plugin {
+	onload() {
+		this.addRibbonIcon('calendar-plus', "Open tomorrow's daily note", () => {
+			void this.openTomorrowNote();
+		});
+
+		this.addCommand({
+			id: 'open',
+			name: "Open tomorrow's daily note",
+			callback: () => void this.openTomorrowNote(),
+		});
 	}
 
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
+	private async openTomorrowNote() {
+		try {
+			const { format, folder, template } = this.getDailyNotesOptions();
+			const tomorrow = moment().add(1, 'day');
+
+			const fileName = tomorrow.format(format?.trim() || DEFAULT_FORMAT);
+			const folderPath = folder?.trim() ?? '';
+			const filePath = normalizePath(
+				folderPath ? `${folderPath}/${fileName}.md` : `${fileName}.md`,
+			);
+
+			let file = this.app.vault.getFileByPath(filePath);
+			if (!file) {
+				await this.ensureParentFolder(filePath);
+				const content = await this.getTemplateContents(
+					template,
+					tomorrow,
+				);
+				file = await this.app.vault.create(filePath, content);
+			}
+			await this.app.workspace.getLeaf().openFile(file);
+		} catch (error) {
+			console.error('Tomorrow note:', error);
+			new Notice("Failed to open tomorrow's daily note.");
+		}
+	}
+
+	// Read the core Daily Notes plugin settings (not part of the public API).
+	private getDailyNotesOptions(): DailyNotesOptions {
+		const internalPlugins = (
+			this.app as App & {
+				internalPlugins: {
+					getPluginById(id: string): {
+						instance: { options?: DailyNotesOptions };
+					} | null;
+				};
+			}
+		).internalPlugins;
+		return internalPlugins.getPluginById('daily-notes')?.instance.options ?? {};
+	}
+
+	// Create missing parent folders of filePath (the date format may contain
+	// slashes, e.g. "YYYY/MM/DD").
+	private async ensureParentFolder(filePath: string) {
+		const parent = filePath.substring(0, filePath.lastIndexOf('/'));
+		if (parent && !this.app.vault.getFolderByPath(parent)) {
+			await this.app.vault.createFolder(parent);
+		}
+	}
+
+	// Load the daily-note template and fill in {{date}}, {{time}} and
+	// {{title}} (with optional ":FORMAT") for tomorrow's date.
+	private async getTemplateContents(
+		template: string | undefined,
+		date: moment.Moment,
+	): Promise<string> {
+		const templatePath = template?.trim();
+		if (!templatePath) {
+			return '';
+		}
+
+		const file = this.app.vault.getFileByPath(
+			normalizePath(
+				templatePath.endsWith('.md')
+					? templatePath
+					: `${templatePath}.md`,
+			),
+		);
+		if (!file) {
+			new Notice(`Daily note template not found: ${templatePath}`);
+			return '';
+		}
+
+		const contents = await this.app.vault.cachedRead(file);
+		return contents.replace(
+			/{{\s*(date|time|title)\s*(?::(.*?))?\s*}}/gi,
+			(_match, variable: string, format?: string) => {
+				switch (variable.toLowerCase()) {
+					case 'time':
+						return date.format(format || 'HH:mm');
+					default:
+						// date and title both resolve to tomorrow's date
+						return date.format(format || DEFAULT_FORMAT);
+				}
+			},
+		);
 	}
 }
