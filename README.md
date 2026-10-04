@@ -1,12 +1,12 @@
-# Tomorrow's note
+# Tomorrow's Note
 
 ## Goal
 
-You just want to create tomorrow's note, which respects your native Obsidian daily note feature.
+You just want to create tomorrow's note, which respects your native Obsidian Daily Note feature.
 
 ## How to use
 
-Use newly added icon on left side bar, or go `ctrl + p` and call `Open tomorrow's daily note` command.
+Use newly added icon on left side bar, or go `Ctrl + P` and call `Open tomorrow's daily note` command.
 
 ## Comment
 
