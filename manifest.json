@@ -1,7 +1,7 @@
 {
-	"id": "tomorrow-note",
-	"name": "Tomorrow Note",
-	"version": "1.0.0",
+	"id": "tomorrows-note",
+	"name": "Tomorrow's Note",
+	"version": "1.0.1",
 	"minAppVersion": "1.5.7",
 	"description": "Create and open tomorrow's daily note using the core Daily Notes settings.",
 	"author": "Hong Shik Branden Kim",
